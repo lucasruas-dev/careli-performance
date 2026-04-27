@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useUsuario } from "@/hooks/useUsuario";
 
 type Departamento = {
   id: string;
@@ -40,6 +41,9 @@ type Ocorrencia = {
 };
 
 export default function OcorrenciasPage() {
+  const { usuario, carregandoUsuario, isAdmin, isLider, isUsuario } =
+    useUsuario();
+
   const [departamentos, setDepartamentos] = useState<Departamento[]>([]);
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [perfis, setPerfis] = useState<Perfil[]>([]);
@@ -67,8 +71,10 @@ export default function OcorrenciasPage() {
   const [erro, setErro] = useState("");
 
   useEffect(() => {
-    carregarDados();
-  }, []);
+    if (!carregandoUsuario && usuario) {
+      carregarDados();
+    }
+  }, [carregandoUsuario, usuario]);
 
   async function carregarDados() {
     setCarregando(true);
@@ -168,25 +174,117 @@ export default function OcorrenciasPage() {
   }
 
   function formatarDataHora(data: string | null) {
-  if (!data) return "-";
+    if (!data) return "-";
 
-  const dataNormalizada =
-    data.endsWith("Z") || data.includes("-03:00")
-      ? data
-      : `${data}Z`;
+    const dataNormalizada =
+      data.endsWith("Z") || data.includes("-03:00") ? data : `${data}Z`;
 
-  const date = new Date(dataNormalizada);
+    const date = new Date(dataNormalizada);
 
-  return date.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
+    return date.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
+  const colaboradoresPermitidos = useMemo(() => {
+    if (!usuario) return [];
+
+    if (isAdmin) {
+      return colaboradores;
+    }
+
+    if (isLider) {
+      return colaboradores.filter((c) => c.setor_id === usuario.setor_id);
+    }
+
+    if (isUsuario) {
+      return colaboradores.filter((c) => c.id === usuario.colaborador_id);
+    }
+
+    return [];
+  }, [colaboradores, usuario, isAdmin, isLider, isUsuario]);
+
+  const departamentosPermitidos = useMemo(() => {
+    const ids = new Set(
+      colaboradoresPermitidos
+        .map((c) => c.setor_id)
+        .filter(Boolean) as string[]
+    );
+
+    return departamentos.filter((d) => ids.has(d.id));
+  }, [departamentos, colaboradoresPermitidos]);
+
+  const ocorrenciasPermitidas = useMemo(() => {
+    if (!usuario) return [];
+
+    return ocorrencias.filter((o) => {
+      const colaborador = buscarColaborador(o.colaborador_id);
+
+      if (!colaborador) return false;
+
+      if (isAdmin) return true;
+
+      if (isLider) {
+        return colaborador.setor_id === usuario.setor_id;
+      }
+
+      if (isUsuario) {
+        return colaborador.id === usuario.colaborador_id;
+      }
+
+      return false;
+    });
+  }, [ocorrencias, colaboradores, usuario, isAdmin, isLider, isUsuario]);
+
+  const ocorrenciasFiltradas = useMemo(() => {
+    return ocorrenciasPermitidas.filter((o) => {
+      const colaborador = buscarColaborador(o.colaborador_id);
+      const tipo = buscarTipo(o.tipo_ocorrencia_id);
+      const perfilId = getPerfilIdDoTipo(tipo);
+
+      if (filtroCodigo && !String(o.codigo || "").includes(filtroCodigo)) {
+        return false;
+      }
+
+      if (filtroColaborador && o.colaborador_id !== filtroColaborador) {
+        return false;
+      }
+
+      if (filtroDepartamento && colaborador?.setor_id !== filtroDepartamento) {
+        return false;
+      }
+
+      if (filtroPerfil && perfilId !== filtroPerfil) {
+        return false;
+      }
+
+      if (filtroTipo && o.tipo_ocorrencia_id !== filtroTipo) {
+        return false;
+      }
+
+      if (filtroData && o.data_ocorrencia !== filtroData) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    ocorrenciasPermitidas,
+    colaboradores,
+    tipos,
+    filtroCodigo,
+    filtroColaborador,
+    filtroDepartamento,
+    filtroPerfil,
+    filtroTipo,
+    filtroData,
+  ]);
 
   async function uploadArquivo(file: File) {
     const extensao = file.name.split(".").pop()?.toLowerCase() || "arquivo";
@@ -235,13 +333,35 @@ export default function OcorrenciasPage() {
     setErro("");
   }
 
+  function limparFiltros() {
+    setFiltroCodigo("");
+    setFiltroColaborador("");
+    setFiltroDepartamento("");
+    setFiltroPerfil("");
+    setFiltroTipo("");
+    setFiltroData("");
+  }
+
   function editarOcorrencia(ocorrencia: Ocorrencia) {
+    if (isUsuario) {
+      setErro("Usuários com perfil comum não podem editar ocorrências.");
+      return;
+    }
+
+    const colaborador = buscarColaborador(ocorrencia.colaborador_id);
+
+    if (isLider && colaborador?.setor_id !== usuario?.setor_id) {
+      setErro("Você só pode editar ocorrências do seu departamento.");
+      return;
+    }
+
     setEditandoId(ocorrencia.id);
     setColaboradorId(ocorrencia.colaborador_id);
     setTipoId(ocorrencia.tipo_ocorrencia_id);
     setDataOcorrencia(ocorrencia.data_ocorrencia || "");
     setObservacao(ocorrencia.observacao || "");
     setArquivo(null);
+    setErro("");
 
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -249,8 +369,25 @@ export default function OcorrenciasPage() {
   async function salvarOcorrencia(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    if (isUsuario) {
+      setErro("Usuários com perfil comum não podem criar ou editar ocorrências.");
+      return;
+    }
+
     if (!colaboradorId || !tipoId) {
       setErro("Selecione o colaborador e a ocorrência.");
+      return;
+    }
+
+    const colaboradorSelecionado = buscarColaborador(colaboradorId);
+
+    if (!colaboradorSelecionado) {
+      setErro("Colaborador não encontrado.");
+      return;
+    }
+
+    if (isLider && colaboradorSelecionado.setor_id !== usuario?.setor_id) {
+      setErro("Líder só pode lançar ocorrência para colaboradores do próprio departamento.");
       return;
     }
 
@@ -288,10 +425,7 @@ export default function OcorrenciasPage() {
     }
 
     const { error } = editandoId
-      ? await supabase
-          .from("ocorrencias")
-          .update(payload)
-          .eq("id", editandoId)
+      ? await supabase.from("ocorrencias").update(payload).eq("id", editandoId)
       : await supabase.from("ocorrencias").insert([payload]);
 
     if (error) {
@@ -307,161 +441,115 @@ export default function OcorrenciasPage() {
     await carregarDados();
   }
 
-  const ocorrenciasFiltradas = useMemo(() => {
-    return ocorrencias.filter((o) => {
-      const colaborador = buscarColaborador(o.colaborador_id);
-      const tipo = buscarTipo(o.tipo_ocorrencia_id);
-      const perfilId = getPerfilIdDoTipo(tipo);
-
-      if (filtroCodigo && !String(o.codigo || "").includes(filtroCodigo)) {
-        return false;
-      }
-
-      if (filtroColaborador && o.colaborador_id !== filtroColaborador) {
-        return false;
-      }
-
-      if (filtroDepartamento && colaborador?.setor_id !== filtroDepartamento) {
-        return false;
-      }
-
-      if (filtroPerfil && perfilId !== filtroPerfil) {
-        return false;
-      }
-
-      if (filtroTipo && o.tipo_ocorrencia_id !== filtroTipo) {
-        return false;
-      }
-
-      if (filtroData && o.data_ocorrencia !== filtroData) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [
-    ocorrencias,
-    colaboradores,
-    tipos,
-    filtroCodigo,
-    filtroColaborador,
-    filtroDepartamento,
-    filtroPerfil,
-    filtroTipo,
-    filtroData,
-  ]);
-
-  function limparFiltros() {
-    setFiltroCodigo("");
-    setFiltroColaborador("");
-    setFiltroDepartamento("");
-    setFiltroPerfil("");
-    setFiltroTipo("");
-    setFiltroData("");
-  }
-
   return (
     <main className="flex-1 p-6">
       <div className="mx-auto max-w-6xl">
-        <h1 className="text-2xl font-bold text-[#3b2f22]">
-          Lançamentos
-        </h1>
+        <h1 className="text-2xl font-bold text-[#3b2f22]">Lançamentos</h1>
+
         <p className="text-sm text-[#7a6a58]">
           Lançamento e gestão das ocorrências da operação.
         </p>
 
-        <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm border border-[#eadfce]">
-          <h2 className="text-lg font-semibold text-[#3b2f22] mb-4">
-            {editandoId ? "Editar ocorrência" : "Nova ocorrência"}
-          </h2>
+        {(isAdmin || isLider) && (
+          <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm border border-[#eadfce]">
+            <h2 className="text-lg font-semibold text-[#3b2f22] mb-4">
+              {editandoId ? "Editar ocorrência" : "Nova ocorrência"}
+            </h2>
 
-          <form onSubmit={salvarOcorrencia}>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <select
-                value={colaboradorId}
-                onChange={(e) => setColaboradorId(e.target.value)}
-                className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
-              >
-                <option value="">Colaborador</option>
-                {colaboradores.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nome}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={tipoId}
-                onChange={(e) => setTipoId(e.target.value)}
-                className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
-              >
-                <option value="">Ocorrência</option>
-                {tipos.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.nome}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="date"
-                value={dataOcorrencia}
-                onChange={(e) => setDataOcorrencia(e.target.value)}
-                className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
-              />
-
-              <label className="flex items-center justify-center border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm cursor-pointer hover:bg-[#f7f3ec]">
-                Evidência
-                <input
-                  type="file"
-                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
-                  onChange={(e) => setArquivo(e.target.files?.[0] || null)}
-                  className="hidden"
-                />
-              </label>
-
-              <input
-                value={observacao}
-                onChange={(e) => setObservacao(e.target.value)}
-                placeholder="Observação"
-                className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
-              />
-
-              <div className="flex gap-3">
-                <button
-                  type="submit"
-                  disabled={salvando}
-                  className="flex-1 px-5 py-3 bg-[#a07c3b] text-white rounded-xl font-semibold hover:bg-[#8b6b32] disabled:opacity-60"
+            <form onSubmit={salvarOcorrencia}>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <select
+                  value={colaboradorId}
+                  onChange={(e) => setColaboradorId(e.target.value)}
+                  className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
                 >
-                  {salvando
-                    ? "Salvando..."
-                    : editandoId
-                    ? "Salvar edição"
-                    : "Adicionar"}
-                </button>
+                  <option value="">Colaborador</option>
+                  {colaboradoresPermitidos.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nome}
+                    </option>
+                  ))}
+                </select>
 
-                {editandoId && (
+                <select
+                  value={tipoId}
+                  onChange={(e) => setTipoId(e.target.value)}
+                  className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
+                >
+                  <option value="">Ocorrência</option>
+                  {tipos.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="date"
+                  value={dataOcorrencia}
+                  onChange={(e) => setDataOcorrencia(e.target.value)}
+                  className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
+                />
+
+                <label className="flex items-center justify-center border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm cursor-pointer hover:bg-[#f7f3ec]">
+                  Evidência
+                  <input
+                    type="file"
+                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                    onChange={(e) => setArquivo(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                </label>
+
+                <input
+                  value={observacao}
+                  onChange={(e) => setObservacao(e.target.value)}
+                  placeholder="Observação"
+                  className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
+                />
+
+                <div className="flex gap-3">
                   <button
-                    type="button"
-                    onClick={limparFormulario}
-                    className="px-5 py-3 bg-[#f7f3ec] border border-[#eadfce] rounded-xl text-sm text-[#3b2f22]"
+                    type="submit"
+                    disabled={salvando}
+                    className="flex-1 px-5 py-3 bg-[#a07c3b] text-white rounded-xl font-semibold hover:bg-[#8b6b32] disabled:opacity-60"
                   >
-                    Cancelar
+                    {salvando
+                      ? "Salvando..."
+                      : editandoId
+                      ? "Salvar edição"
+                      : "Adicionar"}
                   </button>
-                )}
+
+                  {editandoId && (
+                    <button
+                      type="button"
+                      onClick={limparFormulario}
+                      className="px-5 py-3 bg-[#f7f3ec] border border-[#eadfce] rounded-xl text-sm text-[#3b2f22]"
+                    >
+                      Cancelar
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          </form>
+            </form>
 
-          {arquivo && (
-            <p className="mt-4 text-sm text-[#7a6a58]">
-              Evidência selecionada:{" "}
-              <strong className="text-[#3b2f22]">{arquivo.name}</strong>
-            </p>
-          )}
+            {arquivo && (
+              <p className="mt-4 text-sm text-[#7a6a58]">
+                Evidência selecionada:{" "}
+                <strong className="text-[#3b2f22]">{arquivo.name}</strong>
+              </p>
+            )}
 
-          {erro && <p className="mt-4 text-sm text-red-600">{erro}</p>}
-        </section>
+            {erro && <p className="mt-4 text-sm text-red-600">{erro}</p>}
+          </section>
+        )}
+
+        {isUsuario && erro && (
+          <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {erro}
+          </p>
+        )}
 
         <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm border border-[#eadfce]">
           <h2 className="text-lg font-semibold text-[#3b2f22] mb-4">
@@ -482,7 +570,7 @@ export default function OcorrenciasPage() {
               className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
             >
               <option value="">Colaborador</option>
-              {colaboradores.map((c) => (
+              {colaboradoresPermitidos.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.nome}
                 </option>
@@ -492,10 +580,11 @@ export default function OcorrenciasPage() {
             <select
               value={filtroDepartamento}
               onChange={(e) => setFiltroDepartamento(e.target.value)}
-              className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
+              disabled={!isAdmin}
+              className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm disabled:bg-[#f7f3ec]"
             >
               <option value="">Departamento</option>
-              {departamentos.map((d) => (
+              {departamentosPermitidos.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.nome}
                 </option>
@@ -555,115 +644,146 @@ export default function OcorrenciasPage() {
             </span>
           </div>
 
-          {carregando && (
+          {(carregando || carregandoUsuario) && (
             <p className="text-sm text-[#7a6a58]">Carregando...</p>
           )}
 
-          {!carregando && ocorrenciasFiltradas.length === 0 && (
-            <p className="text-sm text-[#7a6a58]">
-              Nenhuma ocorrência cadastrada.
-            </p>
-          )}
+          {!carregando &&
+            !carregandoUsuario &&
+            ocorrenciasFiltradas.length === 0 && (
+              <p className="text-sm text-[#7a6a58]">
+                Nenhuma ocorrência cadastrada.
+              </p>
+            )}
 
-          {!carregando && ocorrenciasFiltradas.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-[#eadfce]">
-              <table className="w-full min-w-[1150px] border-collapse">
-                <thead className="bg-[#f7f3ec]">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">ID</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Data registro</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Data ocorrência</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Colaborador</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Departamento</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Ocorrência</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Perfil</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Evidência</th>
-                    <th className="px-4 py-3 text-right text-sm font-semibold text-[#3b2f22]">Observação</th>
-                    <th className="px-4 py-3 text-right text-sm font-semibold text-[#3b2f22]">Ações</th>
-                  </tr>
-                </thead>
+          {!carregando &&
+            !carregandoUsuario &&
+            ocorrenciasFiltradas.length > 0 && (
+              <div className="overflow-x-auto rounded-xl border border-[#eadfce]">
+                <table className="w-full min-w-[1150px] border-collapse">
+                  <thead className="bg-[#f7f3ec]">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        ID
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Data registro
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Data ocorrência
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Colaborador
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Departamento
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Ocorrência
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Perfil
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Evidência
+                      </th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold text-[#3b2f22]">
+                        Observação
+                      </th>
 
-                <tbody>
-                  {ocorrenciasFiltradas.map((o) => {
-                    const colaborador = buscarColaborador(o.colaborador_id);
-                    const tipo = buscarTipo(o.tipo_ocorrencia_id);
+                      {(isAdmin || isLider) && (
+                        <th className="px-4 py-3 text-right text-sm font-semibold text-[#3b2f22]">
+                          Ações
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
 
-                    return (
-                      <tr
-                        key={o.id}
-                        className="border-t border-[#eadfce] hover:bg-[#fbf8f3]"
-                      >
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {o.codigo || "-"}
-                        </td>
+                  <tbody>
+                    {ocorrenciasFiltradas.map((o) => {
+                      const colaborador = buscarColaborador(o.colaborador_id);
+                      const tipo = buscarTipo(o.tipo_ocorrencia_id);
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {formatarDataHora(o.created_at)}
-                        </td>
+                      return (
+                        <tr
+                          key={o.id}
+                          className="border-t border-[#eadfce] hover:bg-[#fbf8f3]"
+                        >
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {o.codigo || "-"}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {formatarData(o.data_ocorrencia)}
-                        </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {formatarDataHora(o.created_at)}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {colaborador?.nome || "-"}
-                        </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {formatarData(o.data_ocorrencia)}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {buscarNomeDepartamento(colaborador?.setor_id || null)}
-                        </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {colaborador?.nome || "-"}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {tipo?.nome || "-"}
-                        </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {buscarNomeDepartamento(
+                              colaborador?.setor_id || null
+                            )}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {buscarNomePerfilPorTipo(o.tipo_ocorrencia_id)}
-                        </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {tipo?.nome || "-"}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm">
-                          {o.evidencia_url ? (
-                            <a
-                              href={o.evidencia_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[#a07c3b] font-semibold hover:underline"
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {buscarNomePerfilPorTipo(o.tipo_ocorrencia_id)}
+                          </td>
+
+                          <td className="px-4 py-3 text-sm">
+                            {o.evidencia_url ? (
+                              <a
+                                href={o.evidencia_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[#a07c3b] font-semibold hover:underline"
+                              >
+                                Abrir
+                              </a>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3 text-sm text-right">
+                            <button
+                              onClick={() =>
+                                setObservacaoAberta(
+                                  o.observacao || "Sem observação registrada."
+                                )
+                              }
+                              className="px-3 py-2 text-sm border border-[#d8c7ad] rounded-lg text-[#3b2f22] hover:bg-[#f7f3ec]"
                             >
-                              Abrir
-                            </a>
-                          ) : (
-                            "-"
+                              Ver
+                            </button>
+                          </td>
+
+                          {(isAdmin || isLider) && (
+                            <td className="px-4 py-3 text-sm text-right">
+                              <button
+                                onClick={() => editarOcorrencia(o)}
+                                className="px-4 py-2 text-sm border border-[#d8c7ad] rounded-lg text-[#3b2f22] hover:bg-[#f7f3ec]"
+                              >
+                                Editar
+                              </button>
+                            </td>
                           )}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-right">
-                          <button
-                            onClick={() =>
-                              setObservacaoAberta(
-                                o.observacao || "Sem observação registrada."
-                              )
-                            }
-                            className="px-3 py-2 text-sm border border-[#d8c7ad] rounded-lg text-[#3b2f22] hover:bg-[#f7f3ec]"
-                          >
-                            Ver
-                          </button>
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-right">
-                          <button
-                            onClick={() => editarOcorrencia(o)}
-                            className="px-4 py-2 text-sm border border-[#d8c7ad] rounded-lg text-[#3b2f22] hover:bg-[#f7f3ec]"
-                          >
-                            Editar
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
         </section>
       </div>
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { supabase } from "@/lib/supabase";
+import { useUsuario } from "@/hooks/useUsuario";
 
 type Departamento = {
   id: string;
@@ -41,6 +42,10 @@ type Ocorrencia = {
 };
 
 export default function Relatorios() {
+  const { usuario, carregandoUsuario, isAdmin, isLider, isUsuario } =
+    useUsuario();
+    console.log("USUÁRIO LOGADO:", usuario);
+
   const [departamentos, setDepartamentos] = useState<Departamento[]>([]);
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [perfis, setPerfis] = useState<Perfil[]>([]);
@@ -59,8 +64,10 @@ export default function Relatorios() {
   const [carregando, setCarregando] = useState(false);
 
   useEffect(() => {
-    carregarDados();
-  }, []);
+    if (!carregandoUsuario && usuario) {
+      carregarDados();
+    }
+  }, [carregandoUsuario, usuario]);
 
   async function carregarDados() {
     setCarregando(true);
@@ -157,32 +164,79 @@ export default function Relatorios() {
     });
   }
 
- function formatarDataHora(data: string | null) {
-  if (!data) return "-";
+  function formatarDataHora(data: string | null) {
+    if (!data) return "-";
 
-  const dataNormalizada =
-    data.endsWith("Z") || data.includes("-03:00")
-      ? data
-      : `${data}Z`;
+    const dataNormalizada =
+      data.endsWith("Z") || data.includes("-03:00") ? data : `${data}Z`;
 
-  const date = new Date(dataNormalizada);
+    const date = new Date(dataNormalizada);
 
-  return date.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
+    return date.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
 
-  const dadosFiltrados = useMemo(() => {
+  const colaboradoresPermitidos = useMemo(() => {
+    if (!usuario) return [];
+
+    if (isAdmin) {
+      return colaboradores;
+    }
+
+    if (isLider) {
+      return colaboradores.filter((c) => c.setor_id === usuario.setor_id);
+    }
+
+    if (isUsuario) {
+      return colaboradores.filter((c) => c.id === usuario.colaborador_id);
+    }
+
+    return [];
+  }, [colaboradores, usuario, isAdmin, isLider, isUsuario]);
+
+  const departamentosPermitidos = useMemo(() => {
+    const ids = new Set(
+      colaboradoresPermitidos
+        .map((c) => c.setor_id)
+        .filter(Boolean) as string[]
+    );
+
+    return departamentos.filter((d) => ids.has(d.id));
+  }, [departamentos, colaboradoresPermitidos]);
+
+  const dadosPermitidos = useMemo(() => {
+    if (!usuario) return [];
+
     return ocorrencias.filter((o) => {
       const colaborador = buscarColaborador(o.colaborador_id);
+
+      if (!colaborador) return false;
+
+      if (isAdmin) return true;
+
+      if (isLider) {
+        return colaborador.setor_id === usuario.setor_id;
+      }
+
+      if (isUsuario) {
+        return colaborador.id === usuario.colaborador_id;
+      }
+
+      return false;
+    });
+  }, [ocorrencias, colaboradores, usuario, isAdmin, isLider, isUsuario]);
+
+  const dadosFiltrados = useMemo(() => {
+    return dadosPermitidos.filter((o) => {
+      const colaborador = buscarColaborador(o.colaborador_id);
       const departamento = buscarDepartamento(colaborador?.setor_id);
-      const tipo = buscarTipo(o.tipo_ocorrencia_id);
       const perfil = buscarPerfilPorTipo(o.tipo_ocorrencia_id);
 
       if (filtroCodigo && !String(o.codigo || "").includes(filtroCodigo)) {
@@ -220,7 +274,7 @@ export default function Relatorios() {
       return true;
     });
   }, [
-    ocorrencias,
+    dadosPermitidos,
     colaboradores,
     departamentos,
     tipos,
@@ -269,10 +323,14 @@ export default function Relatorios() {
   });
 
   const totalRegistros = dadosFiltrados.length;
-  const totalDepartamentos = porDepartamento.filter((i) => i.nome !== "Não informado").length;
+  const totalDepartamentos = porDepartamento.filter(
+    (i) => i.nome !== "Não informado"
+  ).length;
   const totalPerfis = porPerfil.filter((i) => i.nome !== "Não informado").length;
   const totalTipos = porTipo.filter((i) => i.nome !== "Não informado").length;
-  const totalColaboradores = porColaborador.filter((i) => i.nome !== "Não informado").length;
+  const totalColaboradores = porColaborador.filter(
+    (i) => i.nome !== "Não informado"
+  ).length;
   const totalComEvidencia = dadosFiltrados.filter((o) => o.evidencia_url).length;
   const totalSemEvidencia = dadosFiltrados.filter((o) => !o.evidencia_url).length;
   const maiorTipo = porTipo[0]?.nome || "-";
@@ -332,9 +390,8 @@ export default function Relatorios() {
   return (
     <main className="flex-1 p-6">
       <div className="mx-auto max-w-7xl">
-        <h1 className="text-2xl font-bold text-[#3b2f22]">
-          Relatórios
-        </h1>
+        <h1 className="text-2xl font-bold text-[#3b2f22]">Relatórios</h1>
+
         <p className="text-sm text-[#7a6a58]">
           Dashboard consolidado das ocorrências registradas.
         </p>
@@ -358,7 +415,7 @@ export default function Relatorios() {
               className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
             >
               <option value="">Colaborador</option>
-              {colaboradores.map((c) => (
+              {colaboradoresPermitidos.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.nome}
                 </option>
@@ -368,10 +425,11 @@ export default function Relatorios() {
             <select
               value={filtroDepartamento}
               onChange={(e) => setFiltroDepartamento(e.target.value)}
-              className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm"
+              disabled={!isAdmin}
+              className="border border-[#d8c7ad] rounded-xl px-4 py-3 text-sm disabled:bg-[#f7f3ec]"
             >
               <option value="">Departamento</option>
-              {departamentos.map((d) => (
+              {departamentosPermitidos.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.nome}
                 </option>
@@ -438,7 +496,10 @@ export default function Relatorios() {
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card titulo="Quantidade de registros" valor={totalRegistros} />
-          <Card titulo="Departamentos com registros" valor={totalDepartamentos} />
+          <Card
+            titulo="Departamentos com registros"
+            valor={totalDepartamentos}
+          />
           <Card titulo="Perfil com registros" valor={totalPerfis} />
           <Card titulo="Ocorrências registradas" valor={totalTipos} />
           <Card titulo="Colaboradores com registros" valor={totalColaboradores} />
@@ -474,75 +535,114 @@ export default function Relatorios() {
             </button>
           </div>
 
-          {carregando && (
+          {(carregando || carregandoUsuario) && (
             <p className="text-sm text-[#7a6a58]">Carregando...</p>
           )}
 
-          {!carregando && dadosFiltrados.length === 0 && (
-            <p className="text-sm text-[#7a6a58]">
-              Nenhum dado encontrado.
-            </p>
-          )}
+          {!carregando &&
+            !carregandoUsuario &&
+            dadosFiltrados.length === 0 && (
+              <p className="text-sm text-[#7a6a58]">Nenhum dado encontrado.</p>
+            )}
 
-          {!carregando && dadosFiltrados.length > 0 && (
-            <div className="overflow-x-auto border border-[#eadfce] rounded-xl">
-              <table className="w-full min-w-[1100px] border-collapse">
-                <thead className="bg-[#f7f3ec]">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Código</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Data registro</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Data ocorrência</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Colaborador</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Departamento</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Ocorrência</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Perfil</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Evidência</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">Observação</th>
-                  </tr>
-                </thead>
+          {!carregando &&
+            !carregandoUsuario &&
+            dadosFiltrados.length > 0 && (
+              <div className="overflow-x-auto border border-[#eadfce] rounded-xl">
+                <table className="w-full min-w-[1100px] border-collapse">
+                  <thead className="bg-[#f7f3ec]">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Código
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Data registro
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Data ocorrência
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Colaborador
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Departamento
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Ocorrência
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Perfil
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Evidência
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-[#3b2f22]">
+                        Observação
+                      </th>
+                    </tr>
+                  </thead>
 
-                <tbody>
-                  {dadosFiltrados.map((o) => {
-                    const colaborador = buscarColaborador(o.colaborador_id);
-                    const departamento = buscarDepartamento(colaborador?.setor_id);
-                    const tipo = buscarTipo(o.tipo_ocorrencia_id);
-                    const perfil = buscarPerfilPorTipo(o.tipo_ocorrencia_id);
+                  <tbody>
+                    {dadosFiltrados.map((o) => {
+                      const colaborador = buscarColaborador(o.colaborador_id);
+                      const departamento = buscarDepartamento(
+                        colaborador?.setor_id
+                      );
+                      const tipo = buscarTipo(o.tipo_ocorrencia_id);
+                      const perfil = buscarPerfilPorTipo(o.tipo_ocorrencia_id);
 
-                    return (
-                      <tr key={o.id} className="border-t border-[#eadfce] hover:bg-[#faf7f2]">
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{o.codigo || "-"}</td>
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{formatarDataHora(o.created_at)}</td>
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{formatarData(o.data_ocorrencia)}</td>
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{colaborador?.nome || "-"}</td>
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{departamento?.nome || "-"}</td>
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{tipo?.nome || "-"}</td>
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{perfil?.nome || "-"}</td>
+                      return (
+                        <tr
+                          key={o.id}
+                          className="border-t border-[#eadfce] hover:bg-[#faf7f2]"
+                        >
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {o.codigo || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {formatarDataHora(o.created_at)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {formatarData(o.data_ocorrencia)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {colaborador?.nome || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {departamento?.nome || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {tipo?.nome || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-[#3b2f22]">
+                            {perfil?.nome || "-"}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm">
-                          {o.evidencia_url ? (
-                            <a
-                              href={o.evidencia_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[#a07c3b] font-semibold hover:underline"
-                            >
-                              Abrir
-                            </a>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
+                          <td className="px-4 py-3 text-sm">
+                            {o.evidencia_url ? (
+                              <a
+                                href={o.evidencia_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[#a07c3b] font-semibold hover:underline"
+                              >
+                                Abrir
+                              </a>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
 
-                        <td className="px-4 py-3 text-sm text-[#3b2f22] max-w-[240px] truncate">
-                          {o.observacao || "-"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                          <td className="px-4 py-3 text-sm text-[#3b2f22] max-w-[240px] truncate">
+                            {o.observacao || "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
         </section>
       </div>
     </main>
@@ -581,9 +681,7 @@ function CardLista({
 }) {
   return (
     <div className="bg-white rounded-2xl p-4 border border-[#eadfce] shadow-sm">
-      <h3 className="text-sm font-semibold text-[#3b2f22] mb-3">
-        {titulo}
-      </h3>
+      <h3 className="text-sm font-semibold text-[#3b2f22] mb-3">{titulo}</h3>
 
       {lista.length === 0 ? (
         <p className="text-sm text-[#7a6a58]">Sem dados</p>
