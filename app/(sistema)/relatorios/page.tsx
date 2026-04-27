@@ -150,8 +150,11 @@ export default function Relatorios() {
   function formatarData(data: string | null) {
     if (!data) return "-";
 
-    const [ano, mes, dia] = data.split("-");
-    return `${dia}/${mes}/${ano}`;
+    const date = new Date(`${data}T00:00:00`);
+
+    return date.toLocaleDateString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+    });
   }
 
   function formatarDataHora(data: string | null) {
@@ -160,11 +163,13 @@ export default function Relatorios() {
     const date = new Date(data);
 
     return date.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      second: "2-digit",
     });
   }
 
@@ -265,11 +270,7 @@ export default function Relatorios() {
   const totalColaboradores = porColaborador.filter((i) => i.nome !== "Não informado").length;
   const totalComEvidencia = dadosFiltrados.filter((o) => o.evidencia_url).length;
   const totalSemEvidencia = dadosFiltrados.filter((o) => !o.evidencia_url).length;
-
-  const maiorDepartamento = porDepartamento[0]?.nome || "-";
-  const maiorPerfil = porPerfil[0]?.nome || "-";
   const maiorTipo = porTipo[0]?.nome || "-";
-  const maiorColaborador = porColaborador[0]?.nome || "-";
 
   function limparFiltros() {
     setFiltroCodigo("");
@@ -326,7 +327,6 @@ export default function Relatorios() {
   return (
     <main className="flex-1 p-6">
       <div className="mx-auto max-w-7xl">
-
         <h1 className="text-2xl font-bold text-[#3b2f22]">
           Relatórios
         </h1>
@@ -504,37 +504,14 @@ export default function Relatorios() {
                     const perfil = buscarPerfilPorTipo(o.tipo_ocorrencia_id);
 
                     return (
-                      <tr
-                        key={o.id}
-                        className="border-t border-[#eadfce] hover:bg-[#faf7f2]"
-                      >
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {o.codigo || "-"}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {formatarDataHora(o.created_at)}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {formatarData(o.data_ocorrencia)}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {colaborador?.nome || "-"}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {departamento?.nome || "-"}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {tipo?.nome || "-"}
-                        </td>
-
-                        <td className="px-4 py-3 text-sm text-[#3b2f22]">
-                          {perfil?.nome || "-"}
-                        </td>
+                      <tr key={o.id} className="border-t border-[#eadfce] hover:bg-[#faf7f2]">
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{o.codigo || "-"}</td>
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{formatarDataHora(o.created_at)}</td>
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{formatarData(o.data_ocorrencia)}</td>
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{colaborador?.nome || "-"}</td>
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{departamento?.nome || "-"}</td>
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{tipo?.nome || "-"}</td>
+                        <td className="px-4 py-3 text-sm text-[#3b2f22]">{perfil?.nome || "-"}</td>
 
                         <td className="px-4 py-3 text-sm">
                           {o.evidencia_url ? (
@@ -562,7 +539,6 @@ export default function Relatorios() {
             </div>
           )}
         </section>
-
       </div>
     </main>
   );

@@ -51,7 +51,6 @@ export default function OcorrenciasPage() {
   const [dataOcorrencia, setDataOcorrencia] = useState("");
   const [observacao, setObservacao] = useState("");
   const [arquivo, setArquivo] = useState<File | null>(null);
-
   const [editandoId, setEditandoId] = useState<string | null>(null);
 
   const [filtroCodigo, setFiltroCodigo] = useState("");
@@ -162,14 +161,26 @@ export default function OcorrenciasPage() {
     if (!data) return "-";
 
     const date = new Date(`${data}T00:00:00`);
-    return date.toLocaleDateString("pt-BR");
+
+    return date.toLocaleDateString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+    });
   }
 
   function formatarDataHora(data: string | null) {
     if (!data) return "-";
 
     const date = new Date(data);
-    return date.toLocaleString("pt-BR");
+
+    return date.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   }
 
   async function uploadArquivo(file: File) {
@@ -347,7 +358,6 @@ export default function OcorrenciasPage() {
   return (
     <main className="flex-1 p-6">
       <div className="mx-auto max-w-6xl">
-
         <h1 className="text-2xl font-bold text-[#3b2f22]">
           Lançamentos
         </h1>
